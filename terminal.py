@@ -1,4 +1,3 @@
-import pygame
 import math
 import heapq
 
@@ -87,26 +86,6 @@ HEX_MAP = {
     (9, 4): CELL_TYPE_EMPTY,
 }
 
-COLOR_MAP = {
-    CELL_TYPE_EMPTY: (255, 255, 255),
-    CELL_TYPE_OBSTACLE: (102, 102, 102),
-    CELL_TYPE_TRAP1: (207, 159, 255),
-    CELL_TYPE_TRAP2: (207, 159, 255),
-    CELL_TYPE_TRAP3: (207, 159, 255),
-    CELL_TYPE_TRAP4: (207, 159, 255),
-    CELL_TYPE_REWARD1: (52, 171, 130 ),
-    CELL_TYPE_REWARD2: (52, 171, 130 ),
-    CELL_TYPE_TREASURE: (244, 229, 73),
-    CELL_TYPE_ENTRY: (173, 216, 230),
-}
-
-WIDTH, HEIGHT = 900, 700
-HEX_SIZE = 40
-
-
-
-# --- A* LOGIC AND HELPERS ---
-
 # Identify all treasure locations and assign unique bit positions for the mask.
 TREASURE_LOCATIONS = {}
 treasure_count = 0
@@ -120,28 +99,24 @@ TREASURE_BIT_MAP = {name: i for i, name in enumerate(TREASURE_NAMES)}
 NUM_TREASURES = len(TREASURE_NAMES)
 ALL_TREASURES_COLLECTED_MASK = (1 << NUM_TREASURES) - 1
 
-ENTRY_POINT = (0, 0) # As indicated by the arrow in the screenshot
+ENTRY_POINT = (0, 0)  # Starting point
 
 def get_hex_neighbors(q, r):
-
     neighbors = []
-
-    if q % 2 == 0: # Even column (q)
+    if q % 2 == 0:  # Even column
         directions = [
-            (0, -1), (0, 1), 
+            (0, -1), (0, 1),
             (1, 0), (1, -1),
             (-1, 0), (-1, -1)
         ]
-    else: # Odd column (q)
+    else:  # Odd column
         directions = [
-            (0, -1), (0, 1),   # straight up (r-1), straight down (r+1)
-            (1, 1), (1, 0),    # right-down (q+1, r+1), right (q+1, r)
-            (-1, 1), (-1, 0)   # left-down (q-1, r+1), left (q-1, r)
+            (0, -1), (0, 1),
+            (1, 1), (1, 0),
+            (-1, 1), (-1, 0)
         ]
-
     for dq, dr in directions:
         neighbor_q, neighbor_r = q + dq, r + dr
-        # Only consider neighbors that are explicitly part of our defined HEX_MAP
         if (neighbor_q, neighbor_r) in HEX_MAP:
             neighbors.append((neighbor_q, neighbor_r))
     return neighbors
@@ -187,14 +162,11 @@ def heuristic(state):
     min_dist_to_treasure = float('inf')
     found_uncollected_and_not_removed = False
 
-
     for t_name, t_coords in TREASURE_LOCATIONS.items():
         treasure_bit = TREASURE_BIT_MAP[t_name]
-   
         if not (state.collected_treasures_mask & (1 << treasure_bit)) and \
            not (state.removed_treasures_mask & (1 << treasure_bit)):
             found_uncollected_and_not_removed = True
-
             dist = hex_distance(state.q, state.r, t_coords[0], t_coords[1])
             min_dist_to_treasure = min(min_dist_to_treasure, dist)
 
@@ -204,51 +176,39 @@ def heuristic(state):
     return min_dist_to_treasure
 
 def solve_treasure_hunt():
-
     start_q, start_r = ENTRY_POINT
     initial_state = State(
         q=start_q,
         r=start_r,
-        collected_treasures_mask=0,       
-        removed_treasures_mask=0,      
-        gravity_multiplier=1.0,          
-        speed_multiplier=1.0,            
-        last_move_direction=None         
+        collected_treasures_mask=0,
+        removed_treasures_mask=0,
+        gravity_multiplier=1.0,
+        speed_multiplier=1.0,
+        last_move_direction=None
     )
 
-    
-  
     priority_queue = [(0 + heuristic(initial_state), 0.0, initial_state, [(start_q, start_r)])]
-
     g_costs = {initial_state: 0.0}
-
     visited_states = set()
 
     while priority_queue:
         f_cost, g_cost, current_state, path = heapq.heappop(priority_queue)
-
         if current_state in visited_states:
             continue
         visited_states.add(current_state)
 
-        # --- Goal Test ---
         if (current_state.collected_treasures_mask | current_state.removed_treasures_mask) == ALL_TREASURES_COLLECTED_MASK:
-            return path, g_cost 
+            return path, g_cost
 
         current_q, current_r = current_state.q, current_state.r
 
-        # --- Explore Neighbors ---
-        # Iterate through all valid hexagonal neighbors of the current cell.
         for next_q, next_r in get_hex_neighbors(current_q, current_r):
             cell_type = HEX_MAP.get((next_q, next_r))
 
-            # Skip if the neighbor cell is an obstacle.
             if cell_type == CELL_TYPE_OBSTACLE or cell_type == CELL_TYPE_TRAP4:
                 continue
 
-            # --- Calculate base cost for this move ---
-            base_step_cost = 1.0 # Moving to an adjacent cell fundamentally costs 1 "step".
-
+            base_step_cost = 1.0
             move_effective_steps = base_step_cost * current_state.speed_multiplier
             move_energy_cost = move_effective_steps * current_state.gravity_multiplier
 
@@ -258,186 +218,64 @@ def solve_treasure_hunt():
             new_speed_multiplier = current_state.speed_multiplier
 
             new_last_move_direction = (next_q - current_q, next_r - current_r)
-
-            # Initialize the actual next location; it might change if Trap 3 is triggered.
             actual_next_location = (next_q, next_r)
 
-       
-            if cell_type == CELL_TYPE_TREASURE: # Check for the generic TREASURE type
-                # Iterate through all treasure names and check if the current coordinates match
+            if cell_type == CELL_TYPE_TREASURE:
                 for t_name, t_coords in TREASURE_LOCATIONS.items():
                     if t_coords == (next_q, next_r):
                         treasure_bit = TREASURE_BIT_MAP[t_name]
-                        # Collect the treasure if it hasn't been collected yet AND hasn't been removed by Trap 4.
                         if not (new_collected_treasures_mask & (1 << treasure_bit)) and \
                            not (new_removed_treasures_mask & (1 << treasure_bit)):
-                            new_collected_treasures_mask |= (1 << treasure_bit) # Set the corresponding bit
-                        break # Found and processed this treasure, no need to check others
+                            new_collected_treasures_mask |= (1 << treasure_bit)
+                        break
             elif cell_type == CELL_TYPE_TRAP1:
-                # Trap 1: Increases gravity, doubling energy consumption for subsequent steps.
                 new_gravity_multiplier *= 2.0
-
             elif cell_type == CELL_TYPE_TRAP2:
-                # Trap 2: Decreases speed, doubling the number of "steps" required for a move.
                 new_speed_multiplier *= 2.0
-
             elif cell_type == CELL_TYPE_TRAP3:
-     
                 if current_state.last_move_direction is not None:
                     dq, dr = current_state.last_move_direction
-            
                     forced_q, forced_r = next_q + dq * 2, next_r + dr * 2
                     if (forced_q, forced_r) in HEX_MAP and HEX_MAP[(forced_q, forced_r)] != CELL_TYPE_OBSTACLE:
-                        actual_next_location = (forced_q, forced_r) # Update the agent's location
-                        # The forced move also incurs cost based on the *new* multipliers after landing on Trap 3.
-                        forced_move_energy_cost = base_step_cost * new_speed_multiplier * new_gravity_multiplier
-                        move_energy_cost += forced_move_energy_cost # Add this cost to the current move's total cost.
-    
-
-            elif cell_type == CELL_TYPE_TRAP4:
-          
-                for t_name, t_coords in TREASURE_LOCATIONS.items():
-                    treasure_bit = TREASURE_BIT_MAP[t_name]
-                    if not (new_collected_treasures_mask & (1 << treasure_bit)):
-                        new_removed_treasures_mask |= (1 << treasure_bit) # Mark as removed
-
+                        actual_next_location = (forced_q, forced_r)
+                        next_q, next_r = actual_next_location
+                        move_energy_cost *= 3.0
+                    else:
+                        continue
             elif cell_type == CELL_TYPE_REWARD1:
-              
-                new_gravity_multiplier /= 2.0
-
+                new_gravity_multiplier = max(1.0, new_gravity_multiplier / 2.0)
             elif cell_type == CELL_TYPE_REWARD2:
-                # Reward 2: Increases speed, halving the number of "steps" required for a move.
-                new_speed_multiplier /= 2.0
+                new_speed_multiplier = max(1.0, new_speed_multiplier / 2.0)
 
-    
-            next_state = State(
+            new_state = State(
                 q=actual_next_location[0],
                 r=actual_next_location[1],
                 collected_treasures_mask=new_collected_treasures_mask,
                 removed_treasures_mask=new_removed_treasures_mask,
                 gravity_multiplier=new_gravity_multiplier,
                 speed_multiplier=new_speed_multiplier,
-                last_move_direction=new_last_move_direction # Direction of the move that led to this cell
+                last_move_direction=new_last_move_direction
             )
 
-         
             new_g_cost = g_cost + move_energy_cost
 
-       
-            # or if `next_state` is being visited for the first time:
-            if next_state not in g_costs or new_g_cost < g_costs[next_state]:
-                g_costs[next_state] = new_g_cost # Update the minimum cost to reach this state
-                h_cost = heuristic(next_state)   # Calculate heuristic for the new state
-                f_cost = new_g_cost + h_cost     # Calculate the total estimated cost
+            if new_state in visited_states:
+                continue
 
-             
-                heapq.heappush(priority_queue, (f_cost, new_g_cost, next_state, path + [actual_next_location]))
+            if new_state not in g_costs or new_g_cost < g_costs[new_state]:
+                g_costs[new_state] = new_g_cost
+                f_cost = new_g_cost + heuristic(new_state)
+                heapq.heappush(priority_queue, (f_cost, new_g_cost, new_state, path + [actual_next_location]))
 
-    return None, None # If the priority queue becomes empty and no goal state is found, no path exists.
+    return None, None  # No solution found
 
-def hex_to_pixel(q, r):
-    x = HEX_SIZE * 3/2 * q + 100
-    y = HEX_SIZE * math.sqrt(3) * (r + 0.5 * (q % 2)) + 100
-    return x, y
-
-def draw_hex(surface, x, y, color, label=''):
-    points = [
-        (x + HEX_SIZE * math.cos(math.radians(angle)),
-         y + HEX_SIZE * math.sin(math.radians(angle)))
-        for angle in range(0, 360, 60)
-    ]
-    pygame.draw.polygon(surface, color, points)
-    pygame.draw.polygon(surface, (0, 0, 0), points, 2)
-    if label:
-        font = pygame.font.SysFont(None, 24)
-        img = font.render(label, True, (0, 0, 0))
-        surface.blit(img, (x - 10, y - 12))
-
-def visualize_path(path, total_cost):
-    if path is None:
-        print("No path found to collect all treasures.")
-        return
-    print("\n" + "="*40)
-    print("      --- Solution Found ---")
-    print("="*40)
-    print(f"Total energy cost: {total_cost:.2f}")
-    print(f"Path length (number of moves): {len(path) - 1}")
-    print("\n--- Full Path (q, r) coordinates ---")
-    for i, (q, r) in enumerate(path):
-        step_label = " (Start)" if i == 0 else ""
-        step_label += " (End)" if i == len(path) - 1 else ""
-        print(f"Step {i:<3}: ({q}, {r}){step_label}")
-
-# --- DRAW SOLUTION PATH IN PYGAME ---
-def draw_solution_path(surface, path, color=(255, 0, 0)):
-    if not path or len(path) < 2:
-        return
-    points = [hex_to_pixel(q, r) for (q, r) in path]
-    pygame.draw.lines(surface, color, False, points, 5)
-
-# --- MAIN PYGAME LOOP ---
-def main():
-    global WIDTH, HEIGHT
-    pygame.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
-    pygame.display.set_caption("Hexagon Maze Map")
-    clock = pygame.time.Clock()
-
-    solution_path = None
-    solution_cost = None
-    no_solution = False  # Track if no solution was found
-
-    running = True
-    while running:
-        screen.fill((255, 255, 255))
-        for (q, r), cell_type in HEX_MAP.items():
-            x, y = hex_to_pixel(q, r)
-            color = COLOR_MAP.get(cell_type, (211, 211, 211))
-            if cell_type == CELL_TYPE_ENTRY:
-                label = 'S'
-            elif cell_type == CELL_TYPE_TREASURE:
-                label = 'T'
-            elif cell_type == CELL_TYPE_OBSTACLE:
-                label = '#'
-            elif cell_type.startswith('TRAP'):
-                label = cell_type[-1]
-            elif cell_type.startswith('REWARD'):
-                label = cell_type[-1]
-            else:
-                label = ''
-            draw_hex(screen, x, y, color, label)
-
-        # Draw the solution path if it exists
-        if solution_path:
-            draw_solution_path(screen, solution_path)
-
-        # Draw "No solution found" message if needed
-        if no_solution:
-            font = pygame.font.SysFont(None, 48)
-            text = font.render("No solution found!", True, (255, 0, 0))
-            rect = text.get_rect(center=(WIDTH // 2, 40))
-            screen.blit(text, rect)
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.VIDEORESIZE:
-                WIDTH, HEIGHT = event.w, event.h
-                screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    solution_path, solution_cost = solve_treasure_hunt()
-                    if solution_path:
-                        no_solution = False
-                        print(f"Solution found! Total cost: {solution_cost:.2f}")
-                        visualize_path(solution_path, solution_cost)
-                    else:
-                        no_solution = True
-                        print("No solution found.")
-
-        pygame.display.flip()
-        clock.tick(30)
-    pygame.quit()
-
+# You can test the function like this:
 if __name__ == "__main__":
-    main()
+    path, cost = solve_treasure_hunt()
+    if path:
+        print("Found path to collect all treasures:")
+        for step in path:
+            print(step)
+        print(f"Total cost: {cost}")
+    else:
+        print("No path found.")
