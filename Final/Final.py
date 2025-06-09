@@ -366,25 +366,30 @@ def textual_path_summary(path, total_cost):
         print(f"Step {i:<3}: ({q}, {r}) -> {cell}{step_label}")
     print("="*40)
 # Reverted hex_to_pixel to original behavior to avoid "slanted" visualization
+
 def hex_to_pixel(q, r):
     x = HEX_SIZE * 3/2 * q + 100
     y = HEX_SIZE * math.sqrt(3) * (r + 0.5 * (q % 2)) + 100
     return x, y
 
-def draw_hex(surface, x, y, color, label=''):
+def draw_hex(surface, x, y, color, label='', padding=4):
+    radius = HEX_SIZE - padding  # Reduce size for padding
     points = [
-        (x + HEX_SIZE * math.cos(math.radians(angle)),
-         y + HEX_SIZE * math.sin(math.radians(angle)))
+        (x + radius * math.cos(math.radians(angle)),
+         y + radius * math.sin(math.radians(angle)))
         for angle in range(0, 360, 60)
     ]
     pygame.draw.polygon(surface, color, points)
     pygame.draw.polygon(surface, (0, 0, 0), points, 2)
+
     if label:
-        font = pygame.font.SysFont(None, 24)
+        # Use a Unicode-friendly font
+        font = pygame.font.SysFont("Segoe UI Symbol", 24)
         img = font.render(label, True, (0, 0, 0))
-        # Adjust label position slightly for better centering
         text_rect = img.get_rect(center=(x, y))
         surface.blit(img, text_rect)
+
+
 
 def visualize_path(path, total_cost):
     if path is None:
@@ -393,11 +398,59 @@ def visualize_path(path, total_cost):
     textual_path_summary(path, total_cost)
 
 
-def draw_solution_path(surface, path, color=(255, 0, 0)):
+def draw_solution_path(surface, path, color=(255, 0, 0), node_radius=8, line_width=5, arrow_size=18):
     if not path or len(path) < 2:
         return
     points = [hex_to_pixel(q, r) for (q, r) in path]
-    pygame.draw.lines(surface, color, False, points, 5)
+    # Draw the path line
+    pygame.draw.lines(surface, color, False, points, line_width)
+    # Draw arrows between each pair of points
+    for i in range(len(points) - 1):
+        x1, y1 = points[i]
+        x2, y2 = points[i + 1]
+        draw_arrow(surface, x1, y1, x2, y2, color, arrow_size)
+    # Optionally, highlight start and end
+    pygame.draw.circle(surface, (0, 200, 0), (int(points[0][0]), int(points[0][1])), node_radius + 2)  # Start: green
+    pygame.draw.circle(surface, (0, 0, 200), (int(points[-1][0]), int(points[-1][1])), node_radius + 2)  # End: blue
+
+def draw_arrow(surface, x1, y1, x2, y2, color, arrow_size=18):
+    # Draw an arrowhead at (x2, y2) pointing from (x1, y1)
+    angle = math.atan2(y2 - y1, x2 - x1)
+    # Arrowhead points
+    arrow_tip = (x2, y2)
+    left = (x2 - arrow_size * math.cos(angle - math.pi / 6),
+            y2 - arrow_size * math.sin(angle - math.pi / 6))
+    right = (x2 - arrow_size * math.cos(angle + math.pi / 6),
+             y2 - arrow_size * math.sin(angle + math.pi / 6))
+    pygame.draw.polygon(surface, color, [arrow_tip, left, right])
+
+def draw_cell(screen, q, r, cell_type):
+    x, y = hex_to_pixel(q, r)
+    color = COLOR_MAP.get(cell_type, (211, 211, 211))
+
+    if cell_type == CELL_TYPE_ENTRY:
+        label = 'S'
+    elif cell_type == CELL_TYPE_TREASURE:
+        label = 'T'
+    elif cell_type == CELL_TYPE_OBSTACLE:
+        label = '#'
+    elif cell_type == CELL_TYPE_TRAP1:
+        label = '⊖'
+    elif cell_type == CELL_TYPE_TRAP2:
+        label = '⊕'
+    elif cell_type == CELL_TYPE_TRAP3:
+        label = '⊗'
+    elif cell_type == CELL_TYPE_TRAP4:
+        label = '⊘'
+    elif cell_type == CELL_TYPE_REWARD1:
+        label = '⊞'
+    elif cell_type == CELL_TYPE_REWARD2:
+        label = '⊠'
+    else:
+        label = ''
+
+    draw_hex(screen, x, y, color, label)
+
 
 def main():
     global WIDTH, HEIGHT
@@ -414,21 +467,7 @@ def main():
     while running:
         screen.fill((255, 255, 255))
         for (q, r), cell_type in HEX_MAP.items():
-            x, y = hex_to_pixel(q, r)
-            color = COLOR_MAP.get(cell_type, (211, 211, 211))
-            if cell_type == CELL_TYPE_ENTRY:
-                label = 'S'
-            elif cell_type == CELL_TYPE_TREASURE:
-                label = 'T'
-            elif cell_type == CELL_TYPE_OBSTACLE:
-                label = '#'
-            elif cell_type.startswith('TRAP'):
-                label = cell_type[-1] # Displays 1, 2, 3, 4
-            elif cell_type.startswith('REWARD'):
-                label = cell_type[-1] # Displays 1, 2
-            else:
-                label = ''
-            draw_hex(screen, x, y, color, label)
+           draw_cell(screen, q, r, cell_type)
 
         if solution_path:
             draw_solution_path(screen, solution_path)
