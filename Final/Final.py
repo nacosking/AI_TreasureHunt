@@ -111,45 +111,36 @@ TREASURE_LOCATIONS = {}
 treasure_count = 0
 for coord, cell_type in HEX_MAP.items():
     if cell_type == CELL_TYPE_TREASURE:
-        # Assign a unique identifier like 'TREASURE_0', 'TREASURE_1' etc.
         TREASURE_LOCATIONS[f'{CELL_TYPE_TREASURE}_{treasure_count}'] = coord
         treasure_count += 1
 
-# These global variables are derived from the TREASURE_LOCATIONS.
-# They are crucial for the A* algorithm's goal checking and heuristic.
-TREASURE_NAMES = sorted(TREASURE_LOCATIONS.keys()) # Ensure consistent ordering for bitmasking
+TREASURE_NAMES = sorted(TREASURE_LOCATIONS.keys())
 TREASURE_BIT_MAP = {name: i for i, name in enumerate(TREASURE_NAMES)}
 NUM_TREASURES = len(TREASURE_NAMES)
-# A mask where all bits are set, representing all treasures collected/removed
 ALL_TREASURES_COLLECTED_MASK = (1 << NUM_TREASURES) - 1
-
-# The entry point for the search.
-ENTRY_POINT = (0, 0) # Based on the user's provided HEX_MAP
+ENTRY_POINT = (0, 0)
 
 def get_hex_neighbors(q, r):
     neighbors = []
-    # Axial directions for pointy-top hexes, adjusted for staggered columns.
-    if q % 2 == 0: # Even column (q)
+    if q % 2 == 0:
         directions = [
-            (0, -1), (0, 1),   # straight up (r-1), straight down (r+1)
-            (1, 0), (1, -1),   # right (q+1, r), right-up (q+1, r-1)
-            (-1, 0), (-1, -1)  # left (q-1, r), left-up (q-1, r-1)
+            (0, -1), (0, 1),
+            (1, 0), (1, -1),
+            (-1, 0), (-1, -1)
         ]
-    else: # Odd column (q)
+    else:
         directions = [
-            (0, -1), (0, 1),   # straight up (r-1), straight down (r+1)
-            (1, 1), (1, 0),    # right-down (q+1, r+1), right (q+1, r)
-            (-1, 1), (-1, 0)   # left-down (q-1, r+1), left (q-1, r)
+            (0, -1), (0, 1),
+            (1, 1), (1, 0),
+            (-1, 1), (-1, 0)
         ]
-
     for dq, dr in directions:
         neighbor_q, neighbor_r = q + dq, r + dr
-        if (neighbor_q, neighbor_r) in HEX_MAP: # Check if neighbor exists on our map
+        if (neighbor_q, neighbor_r) in HEX_MAP:
             neighbors.append((neighbor_q, neighbor_r))
     return neighbors
 
 def hex_distance(q1, r1, q2, r2):
-    # Convert to cube coordinates (x, y, z) where x+y+z=0
     s1 = -q1 - r1
     s2 = -q2 - r2
     return (abs(q1 - q2) + abs(r1 - r2) + abs(s1 - s2)) // 2
@@ -166,9 +157,8 @@ class State:
         self.last_move_direction = last_move_direction
 
     def __hash__(self):
-        # Round multipliers to avoid floating point precision issues in hashing/equality checks.
         return hash((self.q, self.r, self.collected_treasures_mask,
-                     self.removed_treasures_mask, round(self.gravity_multiplier, 5), # Increased precision for safety
+                     self.removed_treasures_mask, round(self.gravity_multiplier, 5),
                      round(self.speed_multiplier, 5), self.last_move_direction))
 
     def __eq__(self, other):
@@ -177,7 +167,7 @@ class State:
                 self.r == other.r and
                 self.collected_treasures_mask == other.collected_treasures_mask and
                 self.removed_treasures_mask == other.removed_treasures_mask and
-                abs(self.gravity_multiplier - other.gravity_multiplier) < 1e-9 and # Use tolerance for float equality
+                abs(self.gravity_multiplier - other.gravity_multiplier) < 1e-9 and
                 abs(self.speed_multiplier - other.speed_multiplier) < 1e-9 and
                 self.last_move_direction == other.last_move_direction)
 
@@ -185,17 +175,14 @@ class State:
         return id(self) < id(other)
 
 def heuristic(state):
-    # Sum of minimum distances to all remaining treasures (greedy nearest neighbor)
     remaining = []
     for t_name, t_coords in TREASURE_LOCATIONS.items():
         treasure_bit = TREASURE_BIT_MAP[t_name]
         if not (state.collected_treasures_mask & (1 << treasure_bit)) and \
            not (state.removed_treasures_mask & (1 << treasure_bit)):
             remaining.append(t_coords)
-
     if not remaining:
         return 0
-
     h = 0
     curr = (state.q, state.r)
     unvisited = set(remaining)
@@ -205,17 +192,13 @@ def heuristic(state):
         h += min_dist
         curr = next_t
         unvisited.remove(next_t)
-
     base_heuristic = h * 0.25
-
-    # Penalty if currently on a trap tile (encourages safer paths)
     tile = HEX_MAP.get((state.q, state.r), '')
     trap_penalty = 0
     if tile.startswith('TRAP'):
-        trap_penalty += 5.0  # Heavily discourage paths through traps
+        trap_penalty += 5.0
     elif tile.startswith('REWARD'):
-        trap_penalty -= 1.0  # Slight encouragement
-
+        trap_penalty -= 1.0
     return base_heuristic + trap_penalty
 
 def solve_treasure_hunt(allow_trap4_early_stepping=False):
@@ -226,21 +209,16 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
         gravity_multiplier=1.0, speed_multiplier=1.0,
         last_move_direction=None
     )
-
     counter = itertools.count()
     priority_queue = [(heuristic(initial_state), next(counter), 0.0, initial_state, [(start_q, start_r)])]
     g_costs = {initial_state: 0.0}
-
     while priority_queue:
         f_cost, _, g_cost, current_state, path = heapq.heappop(priority_queue)
         if g_cost > g_costs.get(current_state, float('inf')):
             continue
-
         if (current_state.collected_treasures_mask | current_state.removed_treasures_mask) == ALL_TREASURES_COLLECTED_MASK:
             return path, g_cost
-
         current_q, current_r = current_state.q, current_state.r
-
         for next_q, next_r in get_hex_neighbors(current_q, current_r):
             cell_type_at_next = HEX_MAP.get((next_q, next_r))
             if cell_type_at_next == CELL_TYPE_OBSTACLE:
@@ -248,23 +226,15 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
             if cell_type_at_next == CELL_TYPE_TRAP4 and not allow_trap4_early_stepping and \
                current_state.collected_treasures_mask != ALL_TREASURES_COLLECTED_MASK:
                 continue
-
-            # Copy current state
             new_collected_treasures_mask = current_state.collected_treasures_mask
             new_removed_treasures_mask = current_state.removed_treasures_mask
             new_gravity_multiplier = current_state.gravity_multiplier
             new_speed_multiplier = current_state.speed_multiplier
             new_last_move_direction = (next_q - current_q, next_r - current_r)
             final_agent_q, final_agent_r = next_q, next_r
-
-            # Base move energy cost
             current_move_energy_cost = 1.0 * current_state.speed_multiplier * current_state.gravity_multiplier
-
-            # Additional penalties for traps
             if cell_type_at_next.startswith('TRAP'):
-                current_move_energy_cost += 3.0  # Base penalty for all traps
-
-            # Handle tile effects
+                current_move_energy_cost += 3.0
             if cell_type_at_next == CELL_TYPE_TREASURE:
                 for t_name, t_coords in TREASURE_LOCATIONS.items():
                     if t_coords == (next_q, next_r):
@@ -286,8 +256,6 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
                     treasure_bit = TREASURE_BIT_MAP[t_name]
                     if not (new_collected_treasures_mask & (1 << treasure_bit)):
                         new_removed_treasures_mask |= (1 << treasure_bit)
-
-            # Forced move logic for TRAP3
             if cell_type_at_next == CELL_TYPE_TRAP3:
                 if current_state.last_move_direction is not None:
                     dq, dr = current_state.last_move_direction
@@ -298,12 +266,8 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
                     if forced_type == CELL_TYPE_TRAP4 and not allow_trap4_early_stepping and \
                        new_collected_treasures_mask != ALL_TREASURES_COLLECTED_MASK:
                         continue
-
                     final_agent_q, final_agent_r = forced_q, forced_r
-
-                    # Add forced movement penalty
                     current_move_energy_cost += 4.0
-
                     if forced_type == CELL_TYPE_TREASURE:
                         for t_name, t_coords in TREASURE_LOCATIONS.items():
                             if t_coords == (forced_q, forced_r):
@@ -325,8 +289,6 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
                             treasure_bit = TREASURE_BIT_MAP[t_name]
                             if not (new_collected_treasures_mask & (1 << treasure_bit)):
                                 new_removed_treasures_mask |= (1 << treasure_bit)
-
-            # Construct next state
             next_state = State(
                 q=final_agent_q, r=final_agent_r,
                 collected_treasures_mask=new_collected_treasures_mask,
@@ -335,7 +297,6 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
                 speed_multiplier=new_speed_multiplier,
                 last_move_direction=new_last_move_direction
             )
-
             new_g_cost = g_cost + current_move_energy_cost
             if new_g_cost < g_costs.get(next_state, float('inf')):
                 g_costs[next_state] = new_g_cost
@@ -345,9 +306,7 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
                     new_g_cost, next_state,
                     path + [(final_agent_q, final_agent_r)]
                 ))
-
     return None, None
-
 
 def textual_path_summary(path, total_cost):
     if path is None:
@@ -365,92 +324,84 @@ def textual_path_summary(path, total_cost):
         cell = HEX_MAP.get((q, r), 'UNKNOWN')
         print(f"Step {i:<3}: ({q}, {r}) -> {cell}{step_label}")
     print("="*40)
-# Reverted hex_to_pixel to original behavior to avoid "slanted" visualization
 
-def hex_to_pixel(q, r):
-    x = HEX_SIZE * 3/2 * q + 100
-    y = HEX_SIZE * math.sqrt(3) * (r + 0.5 * (q % 2)) + 100
-    return x, y
+class HexMapVisualizer:
+    def __init__(self, hex_map, color_map, hex_size=40, padding=4):
+        self.hex_map = hex_map
+        self.color_map = color_map
+        self.hex_size = hex_size
+        self.padding = padding
 
-def draw_hex(surface, x, y, color, label='', padding=4):
-    radius = HEX_SIZE - padding  # Reduce size for padding
-    points = [
-        (x + radius * math.cos(math.radians(angle)),
-         y + radius * math.sin(math.radians(angle)))
-        for angle in range(0, 360, 60)
-    ]
-    pygame.draw.polygon(surface, color, points)
-    pygame.draw.polygon(surface, (0, 0, 0), points, 2)
+    def hex_to_pixel(self, q, r):
+        x = self.hex_size * 3/2 * q + 100
+        y = self.hex_size * math.sqrt(3) * (r + 0.5 * (q % 2)) + 100
+        return x, y
 
-    if label:
-        # Use a Unicode-friendly font
-        font = pygame.font.SysFont("Segoe UI Symbol", 24)
-        img = font.render(label, True, (0, 0, 0))
-        text_rect = img.get_rect(center=(x, y))
-        surface.blit(img, text_rect)
+    def draw_hex(self, surface, x, y, color, label=''):
+        radius = self.hex_size - self.padding
+        points = [
+            (x + radius * math.cos(math.radians(angle)),
+             y + radius * math.sin(math.radians(angle)))
+            for angle in range(0, 360, 60)
+        ]
+        pygame.draw.polygon(surface, color, points)
+        pygame.draw.polygon(surface, (0, 0, 0), points, 2)
+        if label:
+            font = pygame.font.SysFont("Segoe UI Symbol", 24)
+            img = font.render(label, True, (0, 0, 0))
+            text_rect = img.get_rect(center=(x, y))
+            surface.blit(img, text_rect)
 
+    def draw_cell(self, screen, q, r, cell_type):
+        x, y = self.hex_to_pixel(q, r)
+        color = self.color_map.get(cell_type, (211, 211, 211))
+        label = ''
+        if cell_type == CELL_TYPE_ENTRY:
+            label = 'S'
+        elif cell_type == CELL_TYPE_TREASURE:
+            label = 'T'
+        elif cell_type == CELL_TYPE_OBSTACLE:
+            label = '#'
+        elif cell_type == CELL_TYPE_TRAP1:
+            label = '⊖'
+        elif cell_type == CELL_TYPE_TRAP2:
+            label = '⊕'
+        elif cell_type == CELL_TYPE_TRAP3:
+            label = '⊗'
+        elif cell_type == CELL_TYPE_TRAP4:
+            label = '⊘'
+        elif cell_type == CELL_TYPE_REWARD1:
+            label = '⊞'
+        elif cell_type == CELL_TYPE_REWARD2:
+            label = '⊠'
+        self.draw_hex(screen, x, y, color, label)
 
+    def draw_solution_path(self, surface, path, color=(255, 0, 0), node_radius=8, line_width=5, arrow_size=18):
+        if not path or len(path) < 2:
+            return
+        points = [self.hex_to_pixel(q, r) for (q, r) in path]
+        pygame.draw.lines(surface, color, False, points, line_width)
+        for i in range(len(points) - 1):
+            x1, y1 = points[i]
+            x2, y2 = points[i + 1]
+            self.draw_arrow(surface, x1, y1, x2, y2, color, arrow_size)
+        pygame.draw.circle(surface, (0, 200, 0), (int(points[0][0]), int(points[0][1])), node_radius + 2)
+        pygame.draw.circle(surface, (0, 0, 200), (int(points[-1][0]), int(points[-1][1])), node_radius + 2)
+
+    def draw_arrow(self, surface, x1, y1, x2, y2, color, arrow_size=18):
+        angle = math.atan2(y2 - y1, x2 - x1)
+        arrow_tip = (x2, y2)
+        left = (x2 - arrow_size * math.cos(angle - math.pi / 6),
+                y2 - arrow_size * math.sin(angle - math.pi / 6))
+        right = (x2 - arrow_size * math.cos(angle + math.pi / 6),
+                 y2 - arrow_size * math.sin(angle + math.pi / 6))
+        pygame.draw.polygon(surface, color, [arrow_tip, left, right])
 
 def visualize_path(path, total_cost):
     if path is None:
         print("No path found to collect all treasures.")
         return
     textual_path_summary(path, total_cost)
-
-
-def draw_solution_path(surface, path, color=(255, 0, 0), node_radius=8, line_width=5, arrow_size=18):
-    if not path or len(path) < 2:
-        return
-    points = [hex_to_pixel(q, r) for (q, r) in path]
-    # Draw the path line
-    pygame.draw.lines(surface, color, False, points, line_width)
-    # Draw arrows between each pair of points
-    for i in range(len(points) - 1):
-        x1, y1 = points[i]
-        x2, y2 = points[i + 1]
-        draw_arrow(surface, x1, y1, x2, y2, color, arrow_size)
-    # Optionally, highlight start and end
-    pygame.draw.circle(surface, (0, 200, 0), (int(points[0][0]), int(points[0][1])), node_radius + 2)  # Start: green
-    pygame.draw.circle(surface, (0, 0, 200), (int(points[-1][0]), int(points[-1][1])), node_radius + 2)  # End: blue
-
-def draw_arrow(surface, x1, y1, x2, y2, color, arrow_size=18):
-    # Draw an arrowhead at (x2, y2) pointing from (x1, y1)
-    angle = math.atan2(y2 - y1, x2 - x1)
-    # Arrowhead points
-    arrow_tip = (x2, y2)
-    left = (x2 - arrow_size * math.cos(angle - math.pi / 6),
-            y2 - arrow_size * math.sin(angle - math.pi / 6))
-    right = (x2 - arrow_size * math.cos(angle + math.pi / 6),
-             y2 - arrow_size * math.sin(angle + math.pi / 6))
-    pygame.draw.polygon(surface, color, [arrow_tip, left, right])
-
-def draw_cell(screen, q, r, cell_type):
-    x, y = hex_to_pixel(q, r)
-    color = COLOR_MAP.get(cell_type, (211, 211, 211))
-
-    if cell_type == CELL_TYPE_ENTRY:
-        label = 'S'
-    elif cell_type == CELL_TYPE_TREASURE:
-        label = 'T'
-    elif cell_type == CELL_TYPE_OBSTACLE:
-        label = '#'
-    elif cell_type == CELL_TYPE_TRAP1:
-        label = '⊖'
-    elif cell_type == CELL_TYPE_TRAP2:
-        label = '⊕'
-    elif cell_type == CELL_TYPE_TRAP3:
-        label = '⊗'
-    elif cell_type == CELL_TYPE_TRAP4:
-        label = '⊘'
-    elif cell_type == CELL_TYPE_REWARD1:
-        label = '⊞'
-    elif cell_type == CELL_TYPE_REWARD2:
-        label = '⊠'
-    else:
-        label = ''
-
-    draw_hex(screen, x, y, color, label)
-
 
 def main():
     global WIDTH, HEIGHT
@@ -459,6 +410,7 @@ def main():
     pygame.display.set_caption("Hexagon Maze Map")
     clock = pygame.time.Clock()
 
+    visualizer = HexMapVisualizer(HEX_MAP, COLOR_MAP, HEX_SIZE, padding=4)
     solution_path = None
     solution_cost = None
     no_solution = False
@@ -467,10 +419,10 @@ def main():
     while running:
         screen.fill((255, 255, 255))
         for (q, r), cell_type in HEX_MAP.items():
-           draw_cell(screen, q, r, cell_type)
+            visualizer.draw_cell(screen, q, r, cell_type)
 
         if solution_path:
-            draw_solution_path(screen, solution_path)
+            visualizer.draw_solution_path(screen, solution_path)
 
         if no_solution:
             font = pygame.font.SysFont(None, 48)
@@ -487,8 +439,7 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     print("Solving...")
-                    # Set allow_trap4_early_stepping to False based on problem understanding
-                    solution_path, solution_cost = solve_treasure_hunt(allow_trap4_early_stepping=False) 
+                    solution_path, solution_cost = solve_treasure_hunt(allow_trap4_early_stepping=False)
                     if solution_path:
                         no_solution = False
                         print(f"Solution found! Total cost: {solution_cost:.2f}")
