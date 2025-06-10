@@ -14,6 +14,8 @@ CELL_TYPE_REWARD1 = 'REWARD1'
 CELL_TYPE_REWARD2 = 'REWARD2'
 CELL_TYPE_TREASURE = 'TREASURE'
 CELL_TYPE_ENTRY = 'ENTRY'
+MODE_LEAST_COST = "Least Cost"
+MODE_SHORTEST_PATH = "Shortest Path"
 
 # --- HEX_MAP definition ---
 HEX_MAP = {
@@ -25,7 +27,7 @@ HEX_MAP = {
     (0, 5): CELL_TYPE_EMPTY,
 
     (1, -1): CELL_TYPE_EMPTY,
-    (1, 0): CELL_TYPE_TRAP1,
+    (1, 0): CELL_TYPE_TRAP2,
     (1, 1): CELL_TYPE_EMPTY,
     (1, 2): CELL_TYPE_REWARD1,
     (1, 3): CELL_TYPE_EMPTY,
@@ -104,6 +106,8 @@ COLOR_MAP = {
 WIDTH, HEIGHT = 900, 700
 HEX_SIZE = 40
 
+
+
 # --- A* LOGIC AND HELPERS ---
 
 # Identify all treasure locations and assign unique bit positions for the mask.
@@ -174,34 +178,60 @@ class State:
     def __lt__(self, other):
         return id(self) < id(other)
 
-def heuristic(state):
-    remaining = []
-    for t_name, t_coords in TREASURE_LOCATIONS.items():
-        treasure_bit = TREASURE_BIT_MAP[t_name]
-        if not (state.collected_treasures_mask & (1 << treasure_bit)) and \
-           not (state.removed_treasures_mask & (1 << treasure_bit)):
-            remaining.append(t_coords)
-    if not remaining:
-        return 0
-    h = 0
-    curr = (state.q, state.r)
-    unvisited = set(remaining)
-    while unvisited:
-        dists = [(hex_distance(curr[0], curr[1], t[0], t[1]), t) for t in unvisited]
-        min_dist, next_t = min(dists)
-        h += min_dist
-        curr = next_t
-        unvisited.remove(next_t)
-    base_heuristic = h * 0.25
-    tile = HEX_MAP.get((state.q, state.r), '')
-    trap_penalty = 0
-    if tile.startswith('TRAP'):
-        trap_penalty += 5.0
-    elif tile.startswith('REWARD'):
-        trap_penalty -= 1.0
-    return base_heuristic + trap_penalty
+def heuristic(state, mode=MODE_LEAST_COST):
+    if mode == MODE_SHORTEST_PATH:
+        # Just use the minimum number of steps (ignore cost multipliers)
+        remaining = []
+        for t_name, t_coords in TREASURE_LOCATIONS.items():
+            treasure_bit = TREASURE_BIT_MAP[t_name]
+            if not (state.collected_treasures_mask & (1 << treasure_bit)) and \
+               not (state.removed_treasures_mask & (1 << treasure_bit)):
+                remaining.append(t_coords)
+        if not remaining:
+            return 0
+        h = 0
+        curr = (state.q, state.r)
+        unvisited = set(remaining)
+        while unvisited:
+            dists = [(hex_distance(curr[0], curr[1], t[0], t[1]), t) for t in unvisited]
+            min_dist, next_t = min(dists)
+            h += min_dist
+            curr = next_t
+            unvisited.remove(next_t)
+        return h  # No multiplier, just steps
+    else:
+        # Original least cost heuristic
+        remaining = []
+        for t_name, t_coords in TREASURE_LOCATIONS.items():
+            treasure_bit = TREASURE_BIT_MAP[t_name]
+            if not (state.collected_treasures_mask & (1 << treasure_bit)) and \
+               not (state.removed_treasures_mask & (1 << treasure_bit)):
+                remaining.append(t_coords)
+        if not remaining:
+            return 0
+        h = 0
+        curr = (state.q, state.r)
+        unvisited = set(remaining)
+        while unvisited:
+            dists = [(hex_distance(curr[0], curr[1], t[0], t[1]), t) for t in unvisited]
+            min_dist, next_t = min(dists)
+            h += min_dist
+            curr = next_t
+            unvisited.remove(next_t)
+        base_heuristic = h * 0.25
+        tile = HEX_MAP.get((state.q, state.r), '')
+        trap_penalty = 0
+        if tile.startswith('TRAP'):
+            trap_penalty += 5.0
+        elif tile.startswith('REWARD'):
+            trap_penalty -= 1.0
+        return base_heuristic + trap_penalty
 
-def solve_treasure_hunt(allow_trap4_early_stepping=False):
+def trace_astar_decision(current_state, next_q, next_r, cell_type_at_next, reason, g_cost, move_cost, new_g_cost):
+    print(f"From ({current_state.q},{current_state.r}) to ({next_q},{next_r}) [{cell_type_at_next}] | "
+          f"g_cost: {g_cost:.2f} + move: {move_cost:.2f} = {new_g_cost:.2f} | {reason}")
+
+def solve_treasure_hunt(allow_trap4_early_stepping=False, trace=False, mode=MODE_LEAST_COST):
     start_q, start_r = ENTRY_POINT
     initial_state = State(
         q=start_q, r=start_r,
@@ -210,21 +240,31 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
         last_move_direction=None
     )
     counter = itertools.count()
-    priority_queue = [(heuristic(initial_state), next(counter), 0.0, initial_state, [(start_q, start_r)])]
+    priority_queue = [(heuristic(initial_state, mode), next(counter), 0.0, initial_state, [(start_q, start_r)])]
     g_costs = {initial_state: 0.0}
+    explored = set()
     while priority_queue:
         f_cost, _, g_cost, current_state, path = heapq.heappop(priority_queue)
         if g_cost > g_costs.get(current_state, float('inf')):
             continue
         if (current_state.collected_treasures_mask | current_state.removed_treasures_mask) == ALL_TREASURES_COLLECTED_MASK:
+            if trace:
+                print("Goal reached!")
             return path, g_cost
         current_q, current_r = current_state.q, current_state.r
         for next_q, next_r in get_hex_neighbors(current_q, current_r):
             cell_type_at_next = HEX_MAP.get((next_q, next_r))
+            reason = ""
             if cell_type_at_next == CELL_TYPE_OBSTACLE:
+                reason = "Obstacle - skipped"
+                if trace:
+                    trace_astar_decision(current_state, next_q, next_r, cell_type_at_next, reason, g_cost, 0, g_cost)
                 continue
             if cell_type_at_next == CELL_TYPE_TRAP4 and not allow_trap4_early_stepping and \
                current_state.collected_treasures_mask != ALL_TREASURES_COLLECTED_MASK:
+                reason = "Trap4 with treasures left - skipped"
+                if trace:
+                    trace_astar_decision(current_state, next_q, next_r, cell_type_at_next, reason, g_cost, 0, g_cost)
                 continue
             new_collected_treasures_mask = current_state.collected_treasures_mask
             new_removed_treasures_mask = current_state.removed_treasures_mask
@@ -232,9 +272,14 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
             new_speed_multiplier = current_state.speed_multiplier
             new_last_move_direction = (next_q - current_q, next_r - current_r)
             final_agent_q, final_agent_r = next_q, next_r
-            current_move_energy_cost = 1.0 * current_state.speed_multiplier * current_state.gravity_multiplier
-            if cell_type_at_next.startswith('TRAP'):
-                current_move_energy_cost += 3.0
+            # --- Cost calculation changes for shortest path mode ---
+            if mode == MODE_SHORTEST_PATH:
+                current_move_energy_cost = 1.0  # Each move costs 1, ignore multipliers and trap penalties
+            else:
+                current_move_energy_cost = 1.0 * current_state.speed_multiplier * current_state.gravity_multiplier
+                if cell_type_at_next.startswith('TRAP'):
+                    current_move_energy_cost += 3.0
+            # --- Rest of your code unchanged ---
             if cell_type_at_next == CELL_TYPE_TREASURE:
                 for t_name, t_coords in TREASURE_LOCATIONS.items():
                     if t_coords == (next_q, next_r):
@@ -256,18 +301,29 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
                     treasure_bit = TREASURE_BIT_MAP[t_name]
                     if not (new_collected_treasures_mask & (1 << treasure_bit)):
                         new_removed_treasures_mask |= (1 << treasure_bit)
+            forced_move = False
             if cell_type_at_next == CELL_TYPE_TRAP3:
                 if current_state.last_move_direction is not None:
                     dq, dr = current_state.last_move_direction
                     forced_q, forced_r = next_q + dq * 2, next_r + dr * 2
                     if (forced_q, forced_r) not in HEX_MAP or HEX_MAP[(forced_q, forced_r)] == CELL_TYPE_OBSTACLE:
+                        reason = "TRAP3 forced move invalid - skipped"
+                        if trace:
+                            trace_astar_decision(current_state, next_q, next_r, cell_type_at_next, reason, g_cost, current_move_energy_cost, g_cost + current_move_energy_cost)
                         continue
                     forced_type = HEX_MAP[(forced_q, forced_r)]
                     if forced_type == CELL_TYPE_TRAP4 and not allow_trap4_early_stepping and \
                        new_collected_treasures_mask != ALL_TREASURES_COLLECTED_MASK:
+                        reason = "TRAP3 forced move to Trap4 with treasures left - skipped"
+                        if trace:
+                            trace_astar_decision(current_state, next_q, next_r, forced_type, reason, g_cost, current_move_energy_cost, g_cost + current_move_energy_cost)
                         continue
                     final_agent_q, final_agent_r = forced_q, forced_r
-                    current_move_energy_cost += 4.0
+                    if mode == MODE_SHORTEST_PATH:
+                        current_move_energy_cost += 1.0  # Forced move is just 1 step
+                    else:
+                        current_move_energy_cost += 4.0
+                    forced_move = True
                     if forced_type == CELL_TYPE_TREASURE:
                         for t_name, t_coords in TREASURE_LOCATIONS.items():
                             if t_coords == (forced_q, forced_r):
@@ -300,12 +356,18 @@ def solve_treasure_hunt(allow_trap4_early_stepping=False):
             new_g_cost = g_cost + current_move_energy_cost
             if new_g_cost < g_costs.get(next_state, float('inf')):
                 g_costs[next_state] = new_g_cost
-                h_cost = heuristic(next_state)
+                h_cost = heuristic(next_state, mode)
+                if trace:
+                    move_type = "Forced" if forced_move else "Normal"
+                    trace_astar_decision(current_state, final_agent_q, final_agent_r, cell_type_at_next, f"{move_type} move - added to queue", g_cost, current_move_energy_cost, new_g_cost)
                 heapq.heappush(priority_queue, (
                     new_g_cost + h_cost, next(counter),
                     new_g_cost, next_state,
                     path + [(final_agent_q, final_agent_r)]
                 ))
+            else:
+                if trace:
+                    trace_astar_decision(current_state, final_agent_q, final_agent_r, cell_type_at_next, "Higher cost - not added", g_cost, current_move_energy_cost, new_g_cost)
     return None, None
 
 def textual_path_summary(path, total_cost):
@@ -414,12 +476,41 @@ def main():
     solution_path = None
     solution_cost = None
     no_solution = False
+    mode = MODE_LEAST_COST  # Start in least cost mode
+
+    # --- Calculate maze bounds for button placement ---
+    all_pixels = [visualizer.hex_to_pixel(q, r) for (q, r) in HEX_MAP.keys()]
+    if all_pixels:
+        _, maze_bottom = max(all_pixels, key=lambda p: p[1])
+    else:
+        maze_bottom = 0
+    button_y = int(maze_bottom + HEX_SIZE + 30)  # 30px padding below maze
 
     running = True
     while running:
         screen.fill((255, 255, 255))
         for (q, r), cell_type in HEX_MAP.items():
             visualizer.draw_cell(screen, q, r, cell_type)
+
+        # --- Draw the mode switch button under the maze ---
+        font = pygame.font.SysFont(None, 32)
+        button_text = f"Mode: {mode} (Click to switch)"
+        text_surf = font.render(button_text, True, (0, 0, 0))
+        text_rect = text_surf.get_rect()
+        button_padding_x = 20
+        button_padding_y = 10
+        button_rect = pygame.Rect(
+            20,
+            button_y,
+            text_rect.width + 2 * button_padding_x,
+            text_rect.height + 2 * button_padding_y
+        )
+        pygame.draw.rect(screen, (200, 200, 200), button_rect)
+        pygame.draw.rect(screen, (0, 0, 0), button_rect, 2)
+        screen.blit(
+            text_surf,
+            (button_rect.x + button_padding_x, button_rect.y + button_padding_y)
+        )
 
         if solution_path:
             visualizer.draw_solution_path(screen, solution_path)
@@ -439,7 +530,8 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     print("Solving...")
-                    solution_path, solution_cost = solve_treasure_hunt(allow_trap4_early_stepping=False)
+                    solution_path, solution_cost = solve_treasure_hunt(
+                        allow_trap4_early_stepping=False, trace=True, mode=mode)
                     if solution_path:
                         no_solution = False
                         print(f"Solution found! Total cost: {solution_cost:.2f}")
@@ -447,6 +539,15 @@ def main():
                     else:
                         no_solution = True
                         print("No solution found.")
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if button_rect.collidepoint(event.pos):
+                    # Switch mode
+                    if mode == MODE_LEAST_COST:
+                        mode = MODE_SHORTEST_PATH
+                    else:
+                        mode = MODE_LEAST_COST
+                    print(f"Switched mode to: {mode}")
+                    solution_path = None  # Clear previous solution
 
         pygame.display.flip()
         clock.tick(30)
